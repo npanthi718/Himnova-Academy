@@ -1,0 +1,632 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -----------------------------------------------------------------------------
+// USER & RBAC
+// -----------------------------------------------------------------------------
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String
+  fullName       String
+  role           String    @default("STUDENT") // SUPER_ADMIN, TRAINER, STUDENT
+  avatarUrl      String?
+  phoneNumber    String?
+  bio            String?
+  referralCode   String    @unique
+  referredById   String?
+  hourlyRate     Float?    @default(0.0)
+  payoutAccount  String?   // Bank / eSewa details
+  specialties    String?   // Tag list: AI, Cloud, React, etc.
+  isMfaEnabled   Boolean   @default(false)
+  mfaSecret      String?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  // Relations
+  enrollments         Enrollment[]
+  lessonProgresses    LessonProgress[]
+  submissions         AssignmentSubmission[]  @relation("StudentSubmissions")
+  reviewedSubmissions AssignmentSubmission[]  @relation("TrainerReviews")
+  assignedBatches     Batch[]                 @relation("TrainerBatches")
+  batchMemberships    BatchStudent[]
+  attendanceRecords   AttendanceRecord[]      @relation("StudentAttendance")
+  markedAttendances   AttendanceRecord[]      @relation("TrainerMarkedAttendance")
+  liveClassesTaught   LiveClass[]
+  payments            PaymentTransaction[]
+  referralsMade       ReferralRecord[]        @relation("ReferralsMade")
+  referralsReceived   ReferralRecord[]        @relation("ReferralsReceived")
+  rewardLedgers       RewardLedger[]
+  certificates        Certificate[]
+  portfolioProjects   PortfolioProject[]
+  notifications       NotificationItem[]
+  aiConversations     AIConversation[]
+  auditLogs           AuditLog[]              @relation("ActorAuditLogs")
+  trainerPayouts      TrainerPayout[]         @relation("TrainerPayouts")
+  expensesLogged      ExpenseRecord[]         @relation("AdminExpenses")
+
+  @@index([role])
+  @@index([email])
+  @@index([referralCode])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+}
+
+// -----------------------------------------------------------------------------
+// COURSE CATEGORIES
+// -----------------------------------------------------------------------------
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  icon        String?
+  orderIndex  Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  courses     Course[]
+
+  @@index([slug])
+}
+
+// -----------------------------------------------------------------------------
+// COURSES & CURRICULUM
+// -----------------------------------------------------------------------------
+model Course {
+  id               String   @id @default(uuid())
+  title            String
+  slug             String   @unique
+  subtitle         String?
+  description      String
+  thumbnailUrl     String?
+  category         String   // Category name string or linked
+  categoryId       String?
+  categoryRef      Category? @relation(fields: [categoryId], references: [id])
+  difficulty       String   @default("BEGINNER") // BEGINNER, INTERMEDIATE, ADVANCED, ENTERPRISE
+  durationHours    Int      @default(40)
+  price            Float    @default(0.0)
+  discountPrice    Float?
+  currency         String   @default("NPR")
+  isPublished      Boolean  @default(false)
+  isFeatured       Boolean  @default(false)
+  prerequisites    String?  // JSON array string
+  learningOutcomes String?  // JSON array string
+  syllabus         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  modules           CourseModule[]
+  batches           Batch[]
+  enrollments       Enrollment[]
+  payments          PaymentTransaction[]
+  certificates      Certificate[]
+  portfolioProjects PortfolioProject[]
+
+  @@index([slug])
+  @@index([category])
+  @@index([isPublished])
+}
+
+model CourseModule {
+  id          String   @id @default(uuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  orderIndex  Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  lessons     Lesson[]
+
+  @@index([courseId])
+  @@index([orderIndex])
+}
+
+model Lesson {
+  id              String   @id @default(uuid())
+  moduleId        String
+  module          CourseModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  type            String   // VIDEO, PDF, SLIDES, QUIZ, ASSIGNMENT, ARTICLE
+  contentMarkdown String?
+  videoUrl        String?
+  pdfUrl          String?
+  slideUrl        String?
+  externalUrl     String?
+  durationMinutes Int      @default(15)
+  orderIndex      Int      @default(0)
+  isFreePreview   Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  resources        LessonResource[]
+  quizQuestions    QuizQuestion[]
+  lessonProgresses LessonProgress[]
+  assignments      Assignment[]
+
+  @@index([moduleId])
+  @@index([orderIndex])
+}
+
+model LessonResource {
+  id          String   @id @default(uuid())
+  lessonId    String
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  title       String
+  fileUrl     String
+  fileType    String   // PDF, ZIP, SLIDES, IMAGE, CODE
+  fileSizeMb  Float    @default(0.0)
+  isDownloadable Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([lessonId])
+}
+
+model QuizQuestion {
+  id             String   @id @default(uuid())
+  lessonId       String
+  lesson         Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  questionText   String
+  optionsJson    String   // JSON array of strings
+  correctOption  Int      // Index (0, 1, 2, 3)
+  explanation    String?
+  orderIndex     Int      @default(0)
+
+  @@index([lessonId])
+}
+
+// -----------------------------------------------------------------------------
+// BATCHES, LIVE CLASSES & ATTENDANCE
+// -----------------------------------------------------------------------------
+model Batch {
+  id          String   @id @default(uuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  name        String
+  code        String   @unique
+  startDate   DateTime
+  endDate     DateTime
+  trainerId   String?
+  trainer     User?    @relation("TrainerBatches", fields: [trainerId], references: [id])
+  status      String   @default("ENROLLING") // ENROLLING, ACTIVE, COMPLETED, ARCHIVED
+  maxStudents Int      @default(30)
+  scheduleDays String?  // e.g. "Sunday - Friday" or "Mon, Wed, Fri"
+  classTiming  String?  // e.g. "07:00 AM - 08:30 AM" or "18:00 - 19:30"
+  totalHours   Int?     @default(75)
+  meetingUrl   String?  // Dedicated Zoom / Meet batch live link
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  students          BatchStudent[]
+  liveClasses       LiveClass[]
+  attendanceRecords AttendanceRecord[]
+  enrollments       Enrollment[]
+  assignments       Assignment[]
+  trainerPayouts    TrainerPayout[]
+
+  @@index([code])
+  @@index([courseId])
+  @@index([trainerId])
+  @@index([status])
+}
+
+model BatchStudent {
+  id        String   @id @default(uuid())
+  batchId   String
+  batch     Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  enrolledAt DateTime @default(now())
+
+  @@unique([batchId, studentId])
+  @@index([studentId])
+}
+
+model LiveClass {
+  id              String   @id @default(uuid())
+  batchId         String
+  batch           Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  trainerId       String
+  trainer         User     @relation(fields: [trainerId], references: [id])
+  title           String
+  description     String?
+  provider        String   @default("ZOOM") // ZOOM, GOOGLE_MEET, CUSTOM
+  meetingUrl      String
+  meetingId       String?
+  meetingPassword String?
+  startTime       DateTime
+  endTime         DateTime
+  isCompleted     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([batchId])
+  @@index([trainerId])
+}
+
+model AttendanceRecord {
+  id         String   @id @default(uuid())
+  batchId    String
+  batch      Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    User     @relation("StudentAttendance", fields: [studentId], references: [id], onDelete: Cascade)
+  markedById String
+  markedBy   User     @relation("TrainerMarkedAttendance", fields: [markedById], references: [id])
+  date       DateTime
+  status     String   @default("PRESENT") // PRESENT, ABSENT, LATE, EXCUSED
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@index([batchId, date])
+  @@index([studentId])
+}
+
+// -----------------------------------------------------------------------------
+// ENROLLMENT & LESSON PROGRESS
+// -----------------------------------------------------------------------------
+model Enrollment {
+  id                    String    @id @default(uuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId              String
+  course                Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  batchId               String?
+  batch                 Batch?    @relation(fields: [batchId], references: [id])
+  progressPercentage    Float     @default(0.0)
+  completedLessonsCount Int       @default(0)
+  totalLessonsCount     Int       @default(0)
+  isCompleted           Boolean   @default(false)
+  completedAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+  @@index([batchId])
+}
+
+model LessonProgress {
+  id                  String    @id @default(uuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId            String
+  lesson              Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  isCompleted         Boolean   @default(false)
+  lastPositionSeconds Int       @default(0)
+  completedAt         DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@index([lessonId])
+}
+
+// -----------------------------------------------------------------------------
+// ASSIGNMENTS & SUBMISSIONS
+// -----------------------------------------------------------------------------
+model Assignment {
+  id                 String   @id @default(uuid())
+  lessonId           String
+  lesson             Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  batchId            String?
+  batch              Batch?   @relation(fields: [batchId], references: [id])
+  title              String
+  instructions       String
+  dueDate            DateTime
+  maxScore           Float    @default(100.0)
+  rubricCriteriaJson String?  // JSON array string
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  submissions        AssignmentSubmission[]
+
+  @@index([lessonId])
+  @@index([batchId])
+}
+
+model AssignmentSubmission {
+  id              String    @id @default(uuid())
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId       String
+  student         User      @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
+  submissionText  String?
+  fileUrl         String?
+  githubUrl       String?
+  liveDemoUrl     String?
+  status          String    @default("SUBMITTED") // SUBMITTED, UNDER_REVIEW, REVISION_REQUIRED, APPROVED, GRADED
+  score           Float?
+  trainerFeedback String?
+  attemptNumber   Int       @default(1)
+  reviewedById    String?
+  reviewedBy      User?     @relation("TrainerReviews", fields: [reviewedById], references: [id])
+  submittedAt     DateTime  @default(now())
+  reviewedAt      DateTime?
+
+  @@index([assignmentId])
+  @@index([studentId])
+  @@index([status])
+}
+
+// -----------------------------------------------------------------------------
+// PAYMENTS & COUPONS (With QR & Manual Claim Fields)
+// -----------------------------------------------------------------------------
+model PaymentTransaction {
+  id                    String   @id @default(uuid())
+  orderId               String   @unique
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId              String
+  course                Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  amount                Float
+  currency              String   @default("NPR")
+  provider              String   // ESEWA, KHALTI, QR_PAYMENT, STRIPE, BANK_TRANSFER
+  providerTransactionId String?
+  senderName            String?  // Name on bank/wallet account
+  senderPhone           String?  // Phone / Account number
+  bankWalletName        String?  // e.g. eSewa, Global IME, NIC Asia, Khalti
+  receiptScreenshotUrl  String?  // Uploaded payment slip screenshot
+  adminNotes            String?  // Admin review/rejection note
+  verifiedById          String?  // Super Admin who approved
+  verifiedAt            DateTime?
+  status                String   @default("PENDING") // PENDING, PENDING_VERIFICATION, COMPLETED, REJECTED, REFUNDED
+  couponCode            String?
+  discountAmount        Float?   @default(0.0)
+  rawCallbackPayload    String?  // JSON string
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([courseId])
+  @@index([status])
+}
+
+model Coupon {
+  id                 String    @id @default(uuid())
+  code               String    @unique
+  type               String    @default("PERCENTAGE") // PERCENTAGE, FIXED_AMOUNT
+  value              Float
+  minPurchaseAmount  Float?    @default(0.0)
+  maxDiscountAmount  Float?
+  expiryDate         DateTime
+  usageLimit         Int       @default(100)
+  usageCount         Int       @default(0)
+  isActive           Boolean   @default(true)
+  applicableCourseId String?
+  createdAt          DateTime  @default(now())
+
+  @@index([code])
+}
+
+// -----------------------------------------------------------------------------
+// REFERRALS & REWARDS
+// -----------------------------------------------------------------------------
+model ReferralRecord {
+  id           String   @id @default(uuid())
+  referrerId   String
+  referrer     User     @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  refereeId    String
+  referee      User     @relation("ReferralsReceived", fields: [refereeId], references: [id], onDelete: Cascade)
+  courseId     String
+  status       String   @default("PENDING") // PENDING, QUALIFIED, REWARDED, EXPIRED
+  rewardAmount Float    @default(500.0)
+  currency     String   @default("NPR")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([referrerId])
+  @@index([refereeId])
+  @@index([status])
+}
+
+model RewardLedger {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount     Float
+  currency   String   @default("NPR")
+  type       String   // REFERRAL_EARNING, CASH_OUT, DISCOUNT_CREDIT
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+// -----------------------------------------------------------------------------
+// ACCOUNTS, EXPENSES & TRAINER PAYOUTS
+// -----------------------------------------------------------------------------
+model ExpenseRecord {
+  id          String   @id @default(uuid())
+  category    String   // MARKETING, INSTRUCTOR_PAYOUT, PLATFORM_TOOLS, OFFICE_EQUIPMENT, GUEST_HONORARIUM, CONTINGENCY, SALARIES, OTHER
+  title       String
+  amount      Float
+  currency    String   @default("NPR")
+  date        DateTime @default(now())
+  receiptUrl  String?
+  notes       String?
+  createdById String?
+  createdBy   User?    @relation("AdminExpenses", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([date])
+}
+
+model TrainerPayout {
+  id             String    @id @default(uuid())
+  trainerId      String
+  trainer        User      @relation("TrainerPayouts", fields: [trainerId], references: [id], onDelete: Cascade)
+  batchId        String?
+  batch          Batch?    @relation(fields: [batchId], references: [id])
+  amount         Float
+  currency       String    @default("NPR")
+  classesCount   Int       @default(0)
+  paymentMethod  String    @default("BANK_TRANSFER") // BANK_TRANSFER, ESEWA, KHALTI, CASH
+  accountDetails String?   // Account number / eSewa ID
+  referenceId    String?   // Bank reference / transaction ID
+  status         String    @default("PENDING") // PENDING, PAID, REJECTED
+  paidAt         DateTime?
+  notes          String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([trainerId])
+  @@index([batchId])
+  @@index([status])
+}
+
+// -----------------------------------------------------------------------------
+// CERTIFICATES & VERIFICATION
+// -----------------------------------------------------------------------------
+model Certificate {
+  id                String   @id @default(uuid())
+  certificateNumber String   @unique
+  studentId         String
+  student           User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId          String
+  course            Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  batchId           String?
+  recipientName     String?  // Custom name override if needed
+  customTitle       String?  // Certificate title override
+  customDescription String?  // Main commendation / achievement paragraph
+  customSkills      String?  // Highlighted specialized skills
+  customHonor       String?  // Honor / Distinction badge (e.g. "Distinction & Capstone Excellence")
+  issueDate         DateTime @default(now())
+  completionScore   Float?
+  qrCodeUrl         String
+  verificationUrl   String
+  signatoryName     String   @default("Sushil Panthi")
+  signatoryTitle    String   @default("Director & Lead AI Architect, Himnova Technologies Private Limited")
+  isValid           Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  @@index([certificateNumber])
+  @@index([studentId])
+  @@index([courseId])
+}
+
+// -----------------------------------------------------------------------------
+// PORTFOLIOS
+// -----------------------------------------------------------------------------
+model PortfolioProject {
+  id               String   @id @default(uuid())
+  studentId        String
+  student          User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId         String?
+  course           Course?  @relation(fields: [courseId], references: [id])
+  title            String
+  slug             String
+  description      String
+  technologiesJson String   // JSON array string
+  thumbnailUrl     String?
+  githubUrl        String?
+  liveUrl          String?
+  videoDemoUrl     String?
+  trainerFeedback  String?
+  isPublished      Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([studentId, slug])
+  @@index([studentId])
+  @@index([isPublished])
+}
+
+// -----------------------------------------------------------------------------
+// NOTIFICATIONS & AUDIT
+// -----------------------------------------------------------------------------
+model NotificationItem {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("INFO") // INFO, SUCCESS, WARNING, ALERT
+  isRead    Boolean  @default(false)
+  linkUrl   String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorId      String?
+  actor        User?    @relation("ActorAuditLogs", fields: [actorId], references: [id])
+  actorEmail   String?
+  actorRole    String?
+  action       String   // LOGIN_SUCCESS, COURSE_CREATED, PAYMENT_VERIFIED, etc.
+  resourceType String
+  resourceId   String?
+  metadataJson String?  // JSON string
+  ipAddress    String?
+  userAgent    String?
+  timestamp    DateTime @default(now())
+
+  @@index([action])
+  @@index([actorId])
+  @@index([resourceType])
+  @@index([timestamp])
+}
+
+// -----------------------------------------------------------------------------
+// AI CONVERSATIONS & RAG
+// -----------------------------------------------------------------------------
+model AIConversation {
+  id         String      @id @default(uuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId   String?
+  title      String      @default("AI Learning Assistant")
+  tokensUsed Int         @default(0)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  messages   AIMessage[]
+
+  @@index([userId])
+}
+
+model AIMessage {
+  id             String         @id @default(uuid())
+  conversationId String
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String         // user, assistant, system
+  content        String
+  tokensCount    Int            @default(0)
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId])
+}
+
+model PlatformSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  valueJson String
+  updatedAt DateTime @updatedAt
+}

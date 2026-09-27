@@ -1,0 +1,66 @@
+{
+  "family": "himnova-launchpad-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/himnovaAppTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "himnova-backend",
+      "image": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/himnova/backend:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 4000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "4000" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:himnova/db_url" },
+        { "name": "REDIS_URL", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:himnova/redis_url" },
+        { "name": "JWT_SECRET", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:himnova/jwt_secret" },
+        { "name": "JWT_REFRESH_SECRET", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:himnova/jwt_refresh_secret" },
+        { "name": "GEMINI_API_KEY", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:himnova/gemini_key" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/himnova-backend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "backend"
+        }
+      }
+    },
+    {
+      "name": "himnova-frontend",
+      "image": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/himnova/frontend:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "3000" },
+        { "name": "NEXT_PUBLIC_API_URL", "value": "https://api.himnovatech.com/api/v1" },
+        { "name": "NEXT_PUBLIC_APP_URL", "value": "https://learn.himnovatech.com" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/himnova-frontend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "frontend"
+        }
+      }
+    }
+  ]
+}

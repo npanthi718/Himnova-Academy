@@ -1,0 +1,45 @@
+# Multi-stage production Dockerfile for Himnova Frontend
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy root and package definitions
+COPY package*.json ./
+COPY shared/package*.json ./shared/
+COPY frontend/package*.json ./frontend/
+
+# Install dependencies
+RUN npm run bootstrap
+
+# Copy source files
+COPY shared/ ./shared/
+COPY frontend/ ./frontend/
+
+# Build shared package
+RUN npm run build:shared
+
+# Build Next.js frontend
+WORKDIR /app/frontend
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# Production runner
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=builder /app/frontend/public ./frontend/public
+COPY --from=builder /app/frontend/.next ./frontend/.next
+COPY --from=builder /app/frontend/node_modules ./frontend/node_modules
+COPY --from=builder /app/frontend/package.json ./frontend/package.json
+COPY --from=builder /app/shared ./shared
+
+WORKDIR /app/frontend
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start"]
